@@ -13,10 +13,6 @@ import java.net.MalformedURLException;
 import java.net.URI;
 import java.util.HashSet;
 import java.util.Set;
-import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.LinkedBlockingQueue;
 
 import javax.swing.JPanel;
 import javax.swing.SwingUtilities;
@@ -39,23 +35,6 @@ public final class VlcVideoView extends JPanel {
   public static enum PlaybackState {
     NO_MEDIA, PLAYING, STOPPED, PAUSED, END_REACHED;
   }
-
-  private static class MediaPosition {
-    private long mediaTime;
-    private long duration;
-    public MediaPosition(long mediaTime, long duration) {
-      this.mediaTime = mediaTime;
-      this.duration = duration;
-    }
-
-    public long getMediaTime() {
-      return mediaTime;
-    }
-    public long getDuration() {
-      return duration;
-    }
-  }
-
   public static interface VlcVideoViewListener {
     
     public void mediaPositionChanged(long position, long duration);
@@ -75,55 +54,6 @@ public final class VlcVideoView extends JPanel {
 
   }
 
-  private class EventsInvoker implements Runnable {
-
-    private BlockingQueue<Object> q;
-    private boolean stopped;
-    public EventsInvoker(){
-      this.q = new LinkedBlockingQueue<>();
-      this.stopped = false;
-    }
-
-    public synchronized void setStopped(boolean stopped) {
-      this.stopped = stopped;
-    }
-
-    public boolean isStopped() {
-      return stopped;
-    }
-
-    public void addEvent(Object o){
-        this.q.offer(o);
-    }
-
-    @Override
-    public void run() {
-      while(!isStopped()){
-        try{
-          final Object o = this.q.take();
-          if(o instanceof MediaPosition){
-            SwingUtilities.invokeLater(new Runnable(){
-              public void run(){
-                MediaPosition mp = (MediaPosition) o;
-                notifyListenersMediaPositionChanged(mp.getMediaTime(), mp.getDuration());
-              }
-            });
-          } else if(o instanceof PlaybackState){
-            SwingUtilities.invokeLater(new Runnable(){
-              public void run(){
-                PlaybackState ps = (PlaybackState) o;
-                notifyListenersPlaybackStateChanged(ps);
-              }
-            });
-          }
-        }catch(InterruptedException ie){
-          Thread.currentThread().interrupt(); // re-set interrupted status
-        }
-      }
-    }
-
-  }
-
   private Canvas videoCanvas;
   private PointerByReference vlcInstance;
   private PointerByReference media;
@@ -136,9 +66,6 @@ public final class VlcVideoView extends JPanel {
   private boolean fullscreen;
 
   private Set<VlcVideoViewListener> listeners;
-
-  private ExecutorService exec;
-  private EventsInvoker eventsInvoker;
 
   static {
     System.setProperty("VLC_VERBOSE", "0"); // disable libvlc's verbose output
@@ -156,9 +83,6 @@ public final class VlcVideoView extends JPanel {
     this.paused = false;
     this.fullscreen = false;
     this.listeners = new HashSet<>();
-    this.exec = Executors.newSingleThreadExecutor();
-    this.eventsInvoker = new EventsInvoker();
-    this.exec.submit(eventsInvoker);
   }
 
   private static boolean isLocalFile(URI uri) {
@@ -171,7 +95,7 @@ public final class VlcVideoView extends JPanel {
 
   private void releaseResources() {
     this.duration = 0;
-    eventsInvoker.addEvent(new MediaPosition(0, 0));
+    notifyListenersMediaPositionChanged(0, 0);
     if (media != null) {
       vlc.libvlc_media_release(media);
       media = null;
@@ -184,7 +108,7 @@ public final class VlcVideoView extends JPanel {
       vlc.libvlc_release(vlcInstance);
       vlcInstance = null;
     }
-    eventsInvoker.addEvent(PlaybackState.NO_MEDIA);
+    notifyListenersPlaybackStateChanged(PlaybackState.NO_MEDIA);
   }
 
   /**
@@ -239,7 +163,12 @@ public final class VlcVideoView extends JPanel {
 
         @Override
         public void apply(libvlc_event_t p_event, Pointer p_data) {
-          eventsInvoker.addEvent(PlaybackState.END_REACHED);
+          SwingUtilities.invokeLater(new Runnable(){
+            @Override
+            public void run() {
+              notifyListenersPlaybackStateChanged(PlaybackState.END_REACHED);
+            }
+          });
         }
         
       }, null);
@@ -251,7 +180,12 @@ public final class VlcVideoView extends JPanel {
 
         @Override
         public void apply(libvlc_event_t p_event, Pointer p_data) {
-          eventsInvoker.addEvent(new MediaPosition(getTime(), getDuration()));
+          SwingUtilities.invokeLater(new Runnable(){
+            @Override
+            public void run() {
+              notifyListenersMediaPositionChanged(getTime(), getDuration());
+            }
+          });
         }
         
       }, null);
@@ -272,12 +206,14 @@ public final class VlcVideoView extends JPanel {
         // TODO: consider throwing exception / logging the error
         return false;
       }
-
       
-
-      eventsInvoker.addEvent(new MediaPosition(getTime(), getDuration()));
-
-      eventsInvoker.addEvent(PlaybackState.STOPPED);
+      SwingUtilities.invokeLater(new Runnable(){
+        @Override
+        public void run() {
+          notifyListenersMediaPositionChanged(0, getDuration());
+          notifyListenersPlaybackStateChanged(PlaybackState.STOPPED);
+        }
+      });
 
       setLoaded(true);
 
@@ -301,7 +237,12 @@ public final class VlcVideoView extends JPanel {
     if (isLoaded()) {
       this.paused = false;
       vlc.libvlc_media_player_play(mediaPlayer);
-      eventsInvoker.addEvent(PlaybackState.PLAYING);
+      SwingUtilities.invokeLater(new Runnable(){
+        @Override
+        public void run() {
+          notifyListenersPlaybackStateChanged(PlaybackState.PLAYING);
+        }
+      });
     }
   }
 
@@ -312,7 +253,12 @@ public final class VlcVideoView extends JPanel {
     if (isLoaded()) {
       this.paused = false;
       vlc.libvlc_media_player_stop(mediaPlayer);
-      eventsInvoker.addEvent(PlaybackState.STOPPED);
+      SwingUtilities.invokeLater(new Runnable(){
+        @Override
+        public void run() {
+          notifyListenersPlaybackStateChanged(PlaybackState.STOPPED);
+        }
+      });
     }
   }
 
@@ -323,7 +269,12 @@ public final class VlcVideoView extends JPanel {
     if (isLoaded()) {
       this.paused = !this.paused;
       vlc.libvlc_media_player_set_pause(mediaPlayer, paused?1:0);
-      eventsInvoker.addEvent(this.paused ? PlaybackState.PAUSED : PlaybackState.PLAYING);
+      SwingUtilities.invokeLater(new Runnable(){
+        @Override
+        public void run() {
+          notifyListenersPlaybackStateChanged(paused ? PlaybackState.PAUSED : PlaybackState.PLAYING);
+        }
+      });
     }
   }
 
@@ -341,6 +292,7 @@ public final class VlcVideoView extends JPanel {
   public synchronized void close() {
     if (isLoaded()) {
       vlc.libvlc_media_player_stop(mediaPlayer);
+      notifyListenersPlaybackStateChanged(PlaybackState.STOPPED);
       this.paused = false;
       setLoaded(false);
       releaseResources();
@@ -429,7 +381,12 @@ public final class VlcVideoView extends JPanel {
   public synchronized void setTime(long time, boolean fast){
     if(isLoaded()){
       vlc.libvlc_media_player_set_time(mediaPlayer, time);
-      eventsInvoker.addEvent(new MediaPosition(getTime(), getDuration()));
+      SwingUtilities.invokeLater(new Runnable(){
+        @Override
+        public void run() {
+          notifyListenersMediaPositionChanged(getTime(), getDuration());
+        }
+      });
     }
   }
 
