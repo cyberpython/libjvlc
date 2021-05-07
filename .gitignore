@@ -10,3 +10,4 @@ bin
 .project
 .settings
 .vscode
+gradle.properties
