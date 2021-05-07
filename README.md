@@ -18,6 +18,22 @@ currently need). Feel free to fork and expand on it.
 Has been verified to work with VLC 2.2.2 on Ubuntu 16.04 and VLC 3.0.12 on 
 Windows 10 Pro.
 
+## How to use
+
+In your build dependencies include a dependency with the following attributes:
+
+```
+group: io.github.cyberpython
+artifact: libjvlc
+version: 0.0.2
+```
+
+e.g. in your `build.gradle` file under `dependencies` include:
+
+```
+  implementation group: 'io.github.cyberpython', name: 'libjvlc', version: '0.0.2'
+```
+
 ## How to build
 
 In order to build the bindings you need JDK 8 or newer.
